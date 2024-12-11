@@ -1,5 +1,5 @@
 // src/components/ClientSimulator.tsx
-import React from 'react';
+import React, { useState } from 'react';
 import styled from 'styled-components';
 import { ClientSimulation } from '../types';
 
@@ -17,11 +17,49 @@ const ControlGroup = styled.div`
   gap: 10px;
 `;
 
+const HeaderContainer = styled.div`
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+`;
+
+const Title = styled.h3`
+  margin: 0;
+`;
+
+const ActionButtons = styled.div`
+  display: flex;
+  gap: 10px;
+`;
+
+const Button = styled.button<{ variant?: 'primary' | 'danger' }>`
+  padding: 8px 16px;
+  border-radius: 4px;
+  border: none;
+  background-color: ${props => props.variant === 'danger' ? '#dc3545' : '#007bff'};
+  color: white;
+  cursor: pointer;
+  
+  &:hover {
+    background-color: ${props => props.variant === 'danger' ? '#c82333' : '#0056b3'};
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+`;
+
 interface Props {
-  client: ClientSimulation;
-  onUpdate: (client: ClientSimulation) => void;
-  onSendMessage: (message: string) => void;
-}
+    client: ClientSimulation;
+    onUpdate: (client: ClientSimulation) => void;
+    onSendMessage: (message: string) => void;
+    onClose?: () => void;     // 新增：关闭连接的回调
+    onDelete?: () => void;    // 新增：删除客户端的回调
+  }
+
+  
 const AdvancedSettings = styled.div`
   margin-top: 20px;
   padding-top: 20px;
@@ -33,23 +71,166 @@ const ControlGroupTitle = styled.h4`
   color: #666;
 `;
 
+const MessageSendSection = styled.div`
+  margin-top: 20px;
+  padding: 15px;
+  background: #f8f9fa;
+  border-radius: 4px;
+`;
+
+const MessageTypeSelect = styled.select`
+  padding: 8px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  margin-right: 10px;
+`;
+
+const MessageInput = styled.input`
+  padding: 8px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  flex: 1;
+`;
+
+const SendButton = styled(Button)`
+  margin-left: 10px;
+`;
+
 export const ClientSimulator: React.FC<Props> = ({
-  client,
-  onUpdate,
-  onSendMessage
-}) => {
-  return (
-    <SimulatorContainer>
-      <h3>客户端 (Client): {client.id}</h3>
-      
-      {/* 状态和基本控制 */}
-      <ControlGroup>
-        <label>状态 (Status):</label>
-        <span>{client.status}</span>
-        <button onClick={() => onSendMessage('ping')}>
-          发送心跳包 (Send Ping)
-        </button>
-      </ControlGroup>
+    client,
+    onUpdate,
+    onSendMessage,
+    onClose,
+    onDelete
+  }) => {
+    const [messageType, setMessageType] = useState<'heartbeat' | 'custom' | 'system'>('heartbeat');
+    const [messageContent, setMessageContent] = useState('ping');
+    
+    // 新增：确认删除对话框
+    const handleDelete = () => {
+      if (window.confirm('确定要删除该客户端吗？这将关闭当前连接。')) {
+        onDelete?.();
+      }
+    };
+
+    // 处理消息发送
+    const handleSendMessage = () => {
+        if (!messageContent.trim()) return;
+
+        const message = {
+        type: messageType,
+        timestamp: Date.now(),
+        clientId: client.id,
+        data: messageType === 'heartbeat' ? {
+            status: messageContent,
+            sequence: Date.now()
+        } : messageType === 'system' ? {
+            action: messageContent,
+            message: `System message: ${messageContent}`
+        } : {
+            content: messageContent,
+            metadata: {
+            source: 'user',
+            timestamp: Date.now()
+            }
+        }
+        };
+
+        onSendMessage(JSON.stringify(message));
+        // 不清空消息内容，方便重复发送
+    };
+  
+    return (
+      <SimulatorContainer>
+        <HeaderContainer>
+          <Title>客户端 (Client): {client.id}</Title>
+          <ActionButtons>
+            <Button
+              onClick={() => onClose?.()}
+              disabled={client.status === 'disconnected'}
+            >
+              关闭连接
+            </Button>
+            <Button
+              variant="danger"
+              onClick={handleDelete}
+            >
+              删除
+            </Button>
+          </ActionButtons>
+        </HeaderContainer>
+        
+        {/* 状态和基本控制 */}
+        <ControlGroup>
+          <label>状态 (Status):</label>
+          <span style={{
+            color: client.status === 'connected' ? '#28a745' : 
+                   client.status === 'error' ? '#dc3545' : '#6c757d'
+          }}>
+            {client.status === 'connected' ? '已连接' :
+             client.status === 'disconnected' ? '已断开' : '错误'}
+          </span>
+          {/* <button 
+            style={{
+                // background: '#28a745',
+                // color: '#fff',
+                // border: '1px solid #dfdfdf',
+                cursor: 'pointer'
+            }}
+            onClick={() => onSendMessage('ping')}
+            disabled={client.status !== 'connected'}
+          >
+            发送心跳包 (Send Ping)
+          </button> */}
+        </ControlGroup>
+        {/* 添加消息发送部分 */}
+      <ControlGroupTitle>消息发送 (Message Sending)</ControlGroupTitle>
+      <MessageSendSection>
+        <ControlGroup>
+          <label>消息类型:</label>
+          <MessageTypeSelect
+            value={messageType}
+            onChange={(e) => {
+              const newType = e.target.value as 'heartbeat' | 'custom' | 'system';
+              setMessageType(newType);
+              // 根据类型设置默认消息
+              if (newType === 'heartbeat') setMessageContent('ping');
+              else if (newType === 'system') setMessageContent('connect');
+              else setMessageContent('');
+            }}
+          >
+            <option value="heartbeat">心跳消息</option>
+            <option value="custom">自定义消息</option>
+            <option value="system">系统消息</option>
+          </MessageTypeSelect>
+        </ControlGroup>
+
+        <ControlGroup>
+          <label>消息内容:</label>
+          <MessageInput
+            type="text"
+            value={messageContent}
+            onChange={(e) => setMessageContent(e.target.value)}
+            placeholder={
+              messageType === 'heartbeat' ? 'Enter heartbeat message (e.g., ping)' :
+              messageType === 'system' ? 'Enter system action' :
+              'Enter custom message'
+            }
+            onKeyPress={(e) => {
+              if (e.key === 'Enter') {
+                handleSendMessage();
+              }
+            }}
+          />
+          <SendButton
+            onClick={handleSendMessage}
+            disabled={client.status !== 'connected'}
+          >
+            发送
+          </SendButton>
+        </ControlGroup>
+      </MessageSendSection>
+  
       
       {/* 网络模拟设置 */}
       <ControlGroupTitle>网络模拟 (Network Simulation)</ControlGroupTitle>
@@ -159,13 +340,24 @@ export const ClientSimulator: React.FC<Props> = ({
         <span>ms</span>
       </ControlGroup>
 
-      {/* 状态指示器 */}
+      {/* 更新状态指示器部分 */}
       <ControlGroupTitle>连接状态 (Connection Status)</ControlGroupTitle>
       <ControlGroup>
         <label>重连状态:</label>
-        <span>
+        <span style={{
+          color: client.status === 'error' ? '#dc3545' : '#28a745'
+        }}>
           {client.currentReconnectAttempts}/{client.maxReconnectAttempts}
           {client.status === 'error' && ' (正在重连...)'}
+        </span>
+      </ControlGroup>
+
+      <ControlGroup>
+        <label>最后心跳时间:</label>
+        <span>
+          {client.lastHeartbeat ? 
+            new Date(client.lastHeartbeat).toLocaleTimeString() : 
+            '无'}
         </span>
       </ControlGroup>
 

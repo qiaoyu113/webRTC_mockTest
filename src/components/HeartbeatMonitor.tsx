@@ -4,7 +4,9 @@ import styled from 'styled-components';
 import StatusPanel from './StatusPanel';
 import { LogViewer } from './LogViewer';
 import { ClientSimulator } from './ClientSimulator';
+import ServerConfigPanel from './ServerConfigPanel';
 import { ConnectionStatus, LogMessage, ClientSimulation } from '../types';
+import { WebSocketMessage, HeartbeatMessage, SystemMessage, CustomMessage } from '../types/message';
 
 const Container = styled.div`
   padding: 20px;
@@ -13,6 +15,19 @@ const Container = styled.div`
   gap: 20px;
   height: 100vh;
   background-color: #f5f5f5;
+`;
+
+const LeftPanel = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  overflow-y: auto;
+`;
+
+const RightPanel = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
 `;
 
 const Button = styled.button`
@@ -34,6 +49,7 @@ export const HeartbeatMonitor: React.FC = () => {
   const [logs, setLogs] = useState<LogMessage[]>([]);
   const websockets = useRef<Map<string, WebSocket>>(new Map());
   const heartbeatIntervals = useRef<Map<string, NodeJS.Timeout>>(new Map());
+  const messageSequence = useRef<number>(0);
 
   const addLog = (message: string, type: LogMessage['type'] = 'info', clientId?: string) => {
     setLogs(prev => [...prev, {
@@ -45,11 +61,21 @@ export const HeartbeatMonitor: React.FC = () => {
     }]);
   };
 
-  // 创建 WebSocket 连接
   const createWebSocketConnection = useCallback((client: ClientSimulation) => {
     const ws = new WebSocket('ws://localhost:8081');
     
     ws.onopen = () => {
+      const connectMessage: SystemMessage = {
+        type: 'system',
+        timestamp: Date.now(),
+        clientId: client.id,
+        data: {
+          action: 'connect',
+          message: 'Initializing connection'
+        }
+      };
+      ws.send(JSON.stringify(connectMessage));
+
       updateClient({
         ...client,
         status: 'connected',
@@ -60,6 +86,16 @@ export const HeartbeatMonitor: React.FC = () => {
     };
 
     ws.onclose = () => {
+      const disconnectMessage: SystemMessage = {
+        type: 'system',
+        timestamp: Date.now(),
+        clientId: client.id,
+        data: {
+          action: 'disconnect',
+          message: 'Connection closed'
+        }
+      };
+
       updateClient({
         ...client,
         status: 'disconnected'
@@ -70,6 +106,17 @@ export const HeartbeatMonitor: React.FC = () => {
     };
 
     ws.onerror = (error) => {
+      const errorMessage: SystemMessage = {
+        type: 'system',
+        timestamp: Date.now(),
+        clientId: client.id,
+        data: {
+          action: 'error',
+          message: 'Connection error occurred'
+        }
+      };
+      ws.send(JSON.stringify(errorMessage));
+      
       addLog(`客户端 ${client.id} 发生错误`, 'error', client.id);
       updateClient({
         ...client,
@@ -78,12 +125,11 @@ export const HeartbeatMonitor: React.FC = () => {
     };
 
     ws.onmessage = (event) => {
-      addLog(`收到消息: ${event.data}`, 'info', client.id);
-      if (event.data === 'pong') {
-        updateClient({
-          ...client,
-          lastHeartbeat: Date.now()
-        });
+      try {
+        const message: WebSocketMessage = JSON.parse(event.data);
+        handleIncomingMessage(client.id, message);
+      } catch (error) {
+        addLog(`消息解析错误: ${event.data}`, 'error', client.id);
       }
     };
 
@@ -91,7 +137,53 @@ export const HeartbeatMonitor: React.FC = () => {
     return ws;
   }, []);
 
-  // 开始心跳
+  const handleIncomingMessage = useCallback((clientId: string, message: WebSocketMessage) => {
+    console.log(message.data)
+    switch (message.type) {
+      case 'heartbeat':
+        const latency = Date.now() - message.timestamp;
+        addLog(`收到心跳响应 #${message.data.status}, 延迟: ${latency}ms`, 'info', clientId);
+        updateClient({
+          ...clients.find(c => c.id === clientId)!,
+          lastHeartbeat: Date.now()
+        });
+        break;
+      
+      case 'system':
+        addLog(`系统消息: ${message.data.message} (${message.data.action})`, 'warning', clientId);
+        break;
+      
+      case 'custom':
+        addLog(`收到消息: ${message.data.content}`, 'info', clientId);
+        // 如果设置了自动回复
+        const client = clients.find(c => c.id === clientId);
+        if (client?.autoReply) {
+          sendAutoReply(clientId, message);
+        }
+        break;
+    }
+  }, [clients]);
+
+  const sendAutoReply = useCallback((clientId: string, originalMessage: CustomMessage) => {
+    const replyMessage: CustomMessage = {
+      type: 'custom',
+      timestamp: Date.now(),
+      clientId,
+      data: {
+        content: `Auto reply to: ${originalMessage.data.content}`,
+        metadata: {
+          isAutoReply: true,
+          originalMessageTimestamp: originalMessage.timestamp
+        }
+      }
+    };
+    const ws = websockets.current.get(clientId);
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify(replyMessage));
+      addLog(`发送自动回复`, 'info', clientId);
+    }
+  }, []);
+
   const startHeartbeat = useCallback((clientId: string) => {
     const client = clients.find(c => c.id === clientId);
     if (!client || !client.heartbeatInterval) return;
@@ -99,15 +191,24 @@ export const HeartbeatMonitor: React.FC = () => {
     const interval = setInterval(() => {
       const ws = websockets.current.get(clientId);
       if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send('ping');
-        addLog(`发送心跳包`, 'info', clientId);
+        messageSequence.current++;
+        const heartbeatMessage: HeartbeatMessage = {
+          type: 'heartbeat',
+          timestamp: Date.now(),
+          clientId,
+          data: {
+            status: 'ping',
+            sequence: messageSequence.current
+          }
+        };
+        ws.send(JSON.stringify(heartbeatMessage));
+        addLog(`发送心跳包 #${messageSequence.current}`, 'info', clientId);
       }
     }, client.heartbeatInterval);
 
     heartbeatIntervals.current.set(clientId, interval);
   }, [clients]);
 
-  // 停止心跳
   const stopHeartbeat = useCallback((clientId: string) => {
     const interval = heartbeatIntervals.current.get(clientId);
     if (interval) {
@@ -116,7 +217,6 @@ export const HeartbeatMonitor: React.FC = () => {
     }
   }, []);
 
-  // 处理重连
   const handleReconnect = useCallback((client: ClientSimulation) => {
     if (client.currentReconnectAttempts >= client.maxReconnectAttempts) {
       addLog(`达到最大重连次数 (${client.maxReconnectAttempts})，停止重连`, 'error', client.id);
@@ -137,7 +237,6 @@ export const HeartbeatMonitor: React.FC = () => {
     }, client.reconnectInterval);
   }, []);
 
-  // 创建新客户端
   const createNewClient = useCallback(() => {
     const newClient: ClientSimulation = {
       id: `client-${Date.now()}`,
@@ -145,10 +244,10 @@ export const HeartbeatMonitor: React.FC = () => {
       packageLoss: 0,
       latency: 0,
       autoReply: true,
-      heartbeatInterval: 5000,  // 默认 5 秒
-      maxReconnectAttempts: 3,  // 默认 3 次
+      heartbeatInterval: 5000,
+      maxReconnectAttempts: 3,
       currentReconnectAttempts: 0,
-      reconnectInterval: 3000,  // 默认 3 秒
+      reconnectInterval: 3000,
       lastHeartbeat: 0
     };
 
@@ -156,13 +255,11 @@ export const HeartbeatMonitor: React.FC = () => {
     createWebSocketConnection(newClient);
   }, []);
 
-  // 更新客户端
   const updateClient = useCallback((updatedClient: ClientSimulation) => {
     setClients(prev => prev.map(c => 
       c.id === updatedClient.id ? updatedClient : c
     ));
 
-    // 如果心跳间隔改变，重启心跳
     const oldClient = clients.find(c => c.id === updatedClient.id);
     if (oldClient && oldClient.heartbeatInterval !== updatedClient.heartbeatInterval) {
       stopHeartbeat(updatedClient.id);
@@ -172,24 +269,83 @@ export const HeartbeatMonitor: React.FC = () => {
     }
   }, [clients]);
 
-  // 发送消息
   const sendMessage = useCallback((clientId: string, message: string) => {
     const ws = websockets.current.get(clientId);
     const client = clients.find(c => c.id === clientId);
     
     if (!ws || !client) return;
-
+  
     if (Math.random() * 100 > client.packageLoss) {
       setTimeout(() => {
-        ws.send(message);
-        addLog(`发送消息: ${message}`, 'info', clientId);
+        try {
+          // 解析消息
+          let messageObj;
+          try {
+            messageObj = JSON.parse(message);
+          } catch (e) {
+            // 如果不是 JSON，使用默认心跳消息格式
+            messageObj = {
+              type: 'heartbeat',
+              timestamp: Date.now(),
+              clientId,
+              data: {
+                status: message,
+                sequence: Date.now()
+              }
+            };
+          }
+  
+          // 发送消息
+          ws.send(JSON.stringify(messageObj));
+          
+          // 添加日志
+          let logMessage = '';
+          switch (messageObj.type) {
+            case 'heartbeat':
+              logMessage = `发送心跳消息: ${messageObj.data.status}`;
+              break;
+            case 'system':
+              logMessage = `发送系统消息: ${messageObj.data.action}`;
+              break;
+            case 'custom':
+              logMessage = `发送自定义消息: ${messageObj.data.content}`;
+              break;
+          }
+          addLog(logMessage, 'info', clientId);
+  
+        } catch (error) {
+          addLog(`发送消息失败: ${error}`, 'error', clientId);
+        }
       }, client.latency);
     } else {
       addLog(`消息丢失`, 'warning', clientId);
     }
   }, [clients]);
 
-  // 清理资源
+  // 添加关闭连接处理函数
+  const handleCloseConnection = useCallback((clientId: string) => {
+    const ws = websockets.current.get(clientId);
+    if (ws) {
+      ws.close();
+      websockets.current.delete(clientId);
+      stopHeartbeat(clientId);
+      updateClient({
+        ...clients.find(c => c.id === clientId)!,
+        status: 'disconnected'
+      });
+      addLog(`手动关闭客户端 ${clientId} 的连接`, 'warning', clientId);
+    }
+  }, [clients]);
+
+  // 添加删除客户端处理函数
+  const handleDeleteClient = useCallback((clientId: string) => {
+    // 首先关闭连接
+    handleCloseConnection(clientId);
+    // 然后从客户端列表中移除
+    setClients(prev => prev.filter(c => c.id !== clientId));
+    addLog(`删除客户端 ${clientId}`, 'warning', clientId);
+  }, [handleCloseConnection]);
+
   useEffect(() => {
     return () => {
       websockets.current.forEach(ws => ws.close());
@@ -199,7 +355,8 @@ export const HeartbeatMonitor: React.FC = () => {
 
   return (
     <Container>
-      <div>
+      <LeftPanel>
+        <ServerConfigPanel />
         <Button onClick={createNewClient}>添加新客户端 (Add New Client)</Button>
         {clients.map(client => (
           <ClientSimulator
@@ -207,12 +364,14 @@ export const HeartbeatMonitor: React.FC = () => {
             client={client}
             onUpdate={updateClient}
             onSendMessage={(message) => sendMessage(client.id, message)}
+            onClose={() => handleCloseConnection(client.id)}
+            onDelete={() => handleDeleteClient(client.id)}
           />
         ))}
-      </div>
-      <div>
+      </LeftPanel>
+      <RightPanel>
         <LogViewer logs={logs} />
-      </div>
+      </RightPanel>
     </Container>
   );
 };
