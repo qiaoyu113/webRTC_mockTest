@@ -1,0 +1,32 @@
+{
+  "name": "mockserver",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start:server": "ts-node -P tsconfig.server.json src/server.ts",
+    "start:client": "vite",
+    "test": "ts-node -P tsconfig.server.json src/heartbeatTestServer.ts",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@types/ws": "^8.5.13",
+    "react": "^17.0.2",
+    "react-dom": "^17.0.2",
+    "styled-components": "^5.3.3",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "@types/react": "^17.0.38",
+    "@types/react-dom": "^17.0.11",
+    "@types/styled-components": "^5.1.19",
+    "@vitejs/plugin-react": "^4.3.4",
+    "ts-node": "^10.9.2",
+    "tsconfig-paths": "^4.2.0",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.3"
+  }
+}
