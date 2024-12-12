@@ -113,7 +113,7 @@ interface ConnectionConfig {
 ```typescript
 // 创建连接
 const connection = new WebSocketConnection({
-  url: 'ws://localhost:8081',
+  url: 'ws://localhost:50100',
   heartbeatInterval: 5000
 });
 

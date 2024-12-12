@@ -5,7 +5,7 @@ import { HeartbeatServer } from './server/heartbeatServer';
 import { isPortAvailable, getAvailablePort } from './utils/portCheck';
 
 async function startServer() {
-  const desiredPort = 8081;
+  const desiredPort = 50100;
   const httpPort = 8082;
   let wsPort = desiredPort;
 

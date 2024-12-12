@@ -62,7 +62,7 @@ export const HeartbeatMonitor: React.FC = () => {
   };
 
   const createWebSocketConnection = useCallback((client: ClientSimulation) => {
-    const ws = new WebSocket('ws://localhost:8081');
+    const ws = new WebSocket('ws://localhost:50100');
     
     ws.onopen = () => {
       const connectMessage: SystemMessage = {

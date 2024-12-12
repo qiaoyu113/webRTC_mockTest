@@ -4,7 +4,7 @@ import { HeartbeatServer } from './heartbeatTestServer';
 async function startServer() {
   try {
     const server = new HeartbeatServer({
-      port: 8081,
+      port: 50100,
       simulateLatency: false
     });
 

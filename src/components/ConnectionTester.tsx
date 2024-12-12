@@ -121,7 +121,7 @@ const ConnectionTester: React.FC = () => {
     if (connection) return;
 
     const wsConnection = new WebSocketConnection({
-      url: 'ws://localhost:8081',
+      url: 'ws://localhost:50100',
       packetParser: PacketParser,
       heartbeatInterval: config.heartbeatInterval
     });
